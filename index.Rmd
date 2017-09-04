@@ -1,0 +1,158 @@
+---
+title: "FINAL PROJECT"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Human Activity Recognition
+## Summary
+The human activity recognition research has traditionally focused on discriminating between different activities, i.e. to predict "which" activity was performed at a specific point in time (like with the Daily Living Activities dataset above). 
+
+In the experiment, six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+The puropose of this project is to predict how the excersice was done, depending in the parcicular variable "class" and other variables.
+
+## Analysis
+
+**Loading the Data**
+
+```{r, results='hold',message= FALSE, warning=FALSE}
+library(caret);library(rpart); library(rpart.plot)
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+fileUrl_train<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+fileUrl_test<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+dir_train<-"train.csv"
+dir_test<-"test.csv"
+download.file(fileUrl_train,dir_train)
+download.file(fileUrl_test,dir_test)
+
+training<-read.table("train.csv",header = TRUE, sep = ",",na.strings=c("NA","#DIV/0!",""))
+
+test<-read.table("test.csv",header = TRUE, sep = ",",na.strings=c("NA","#DIV/0!",""))
+```
+
+**Cleaning the Data**
+
+First, let's remove the first seven column that do not have relevant relation over the variable classe. Then, let's remove variables that contain any missing value.
+
+```{r}
+# removing 7 columns
+training<-training[,-c(1:7)]
+test<-test[,-c(1:7)]
+
+# removing columns with missing NAs
+training <- training[, colSums(is.na(training)) == 0]
+test <- test[, colSums(is.na(test)) == 0]
+```
+
+The cleaned data sets have 53 columns with the same first 53 variables. Training data has 19622 rows while Test data has 20 rows.
+
+**Splitting the Data**
+
+In order to get out-of-sample errors, we split the cleaned training datset into a training set (mytrain, 70%) for prediction and a validation set (mytest 30%) to compute the out-of-sample errors.
+
+```{r,results='hold'}
+intrain<-createDataPartition(y=training$classe,p=0.7,list = FALSE)
+mytrain<-training[intrain,]
+mytest<-training[-intrain,]
+dim(mytrain);dim(mytest)
+```
+**Test Harness**
+
+We will 5-fold crossvalidation to estimate accuracy. This will split mytrain dataset into 5 parts, train in 4 and test on 1 and release for all combinations of train-test splits. We will also repeat the process 3 times for each algorithm with different splits of the data into 5 groups, in an effort to get a more accurate estimate.
+
+```{r,results='hold'}
+control <- trainControl(method="cv", number=5,allowParallel = TRUE)
+metric <- "Accuracy"
+```
+We are using the metric of "Accuracy" to evaluate models. This is a ratio of the number of correctly predicted instances in divided by the total number of instances in the dataset multiplied by 100 to give a percentage. We will be using the metric variable when we run build and evaluate each model next
+
+**Creating a Model**
+
+Let's going to evaluate e models: classification trees, random forest and boosting. 
+
+* Classification Trees
+
+```{r,results='hold',warning=FALSE,message=FALSE}
+set.seed(125)
+fit_ct <- train(classe~., data=mytrain, method="rpart", trControl=control,metric=metric)
+```
+
+* Random Forest
+
+```{r,warning=FALSE,message=FALSE}
+set.seed(125)
+fit_rf <- train(classe~., data=mytrain, method="rf", trControl=control,metric=metric)
+```
+
+* Generalized Boosted Regression
+
+```{r,warning=FALSE,message=FALSE}
+set.seed(125)
+fit_gbm <- train(classe ~ ., data=mytrain, method = "gbm", trControl=control,metric=metric, verbose = FALSE)
+```
+
+We now have 3 models and accuracy estimations for each. We need to compare the models to each other and select the most accurate.
+
+```{r}
+# summarize accuracy of models
+results <- resamples(list(class_tree=fit_ct, ram_tree=fit_rf, boost=fit_gbm))
+summary(results)
+```
+
+We can also create a plot of the model evaluation results and compare the spread and the mean accuracy of each model. There is a population of accuracy measures for each algorithm because each algorithm was evaluated 5 times (5 fold cross validation).
+
+```{r}
+# compare accuracy of models
+dotplot(results)
+```
+
+The results for random forest model is summarized.
+
+```{r}
+# summarize Best Model
+print(fit_rf)
+```
+
+**Validating**
+
+The random forest was the most accurate model. Now we want to get an idea of the accuracy of the model on our validation set.
+
+This will give us an independent final check on the accuracy of the best model. It is valuable to keep a validation set just in case you made a slip during such as overfitting to the training set or a data leak. Both will result in an overly optimistic result.
+
+We can run the rf model directly on the validation set and summarize the results in a confusion matrix.
+
+```{r}
+# estimate skill of LDA on the validation dataset
+predictions <- predict(fit_rf, mytest)
+confusionMatrix(predictions, mytest$classe)
+```
+We can see that the accuracy is 99%, that means that we may have an accurate and a reliably model.
+
+**Predicting**
+
+We now use random forests to predict the outcome variable classe for the testing set.
+```{r}
+prediction_test <- predict(fit_rf, test)
+prediction_test
+```
+
+## Conclusions
+
+For this dataset, random forest method is the best model. The accuracy rate is 0.9907, and so the out-of-sample error rate is 0.0093. This may be due to the fact that many predictors are highly correlated. Random forests chooses a subset of predictors at each split and decorrelate the trees. This leads to high accuracy, although this algorithm is sometimes difficult to interpret and computationally inefficient. 
+
+**References**
+
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
+Cited by 2 (Google Scholar)
+
+Read more: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har#ixzz4qm2iBf9d
